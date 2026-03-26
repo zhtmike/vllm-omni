@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: Apache-2.0
 # SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 
+import random
+
 import pytest
 
 from vllm_omni.diffusion.request import OmniDiffusionRequest
@@ -17,6 +19,7 @@ def _make_request() -> OmniDiffusionRequest:
 
 
 def test_tp_seed_same_across_ranks_and_varies_across_requests():
+    random.seed(0)
     n_requests = 5
     seeds = [_make_request().sampling_params.seed for _ in range(n_requests)]
 
