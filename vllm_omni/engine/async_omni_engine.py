@@ -1819,6 +1819,37 @@ class AsyncOmniEngine:
             ),
         )
 
+    async def sleep(
+        self,
+        stage_ids: list[int],
+        level: int = 1,
+        mode: str = "abort",
+    ) -> None:
+        """Put engine stages to sleep via the EngineCore.
+
+        Routes through StagePool.sleep_async() → StageEngineCoreClient.sleep_async()
+        → EngineCore.sleep(), which atomically pauses the scheduler, aborts in-flight
+        requests (mode="abort"), waits for idle, and only then sleeps the executor.
+        """
+        for sid in stage_ids:
+            pool = self.stage_pools[sid]
+            await pool.sleep_async(level=level, mode=mode)
+
+    async def wake_up(
+        self,
+        stage_ids: list[int],
+        tags: list[str] | None = None,
+    ) -> None:
+        """Wake engine stages via the EngineCore.
+
+        Routes through StagePool.wake_up_async() → StageEngineCoreClient.wake_up_async()
+        → EngineCore.wake_up(), which restores GPU memory and automatically resumes
+        the scheduler when all tags are awake.
+        """
+        for sid in stage_ids:
+            pool = self.stage_pools[sid]
+            await pool.wake_up_async(tags=tags)
+
     def is_alive(self) -> bool:
         """Whether the orchestrator thread is alive."""
         return bool(self.orchestrator_thread.is_alive())
