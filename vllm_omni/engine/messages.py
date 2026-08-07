@@ -42,6 +42,7 @@ class AddCompanionRequestMessage(EngineQueueMessage, kw_only=True):
 class AbortRequestMessage(EngineQueueMessage, kw_only=True):
     type: Literal["abort"] = "abort"
     request_ids: list[str]
+    rpc_id: str | None = None
 
 
 class CollectiveRPCRequestMessage(EngineQueueMessage, kw_only=True):
@@ -106,3 +107,9 @@ class CollectiveRPCResultMessage(EngineQueueMessage, kw_only=True):
     method: str
     stage_ids: list[int]
     results: list[object]
+
+
+class AbortResultMessage(EngineQueueMessage, kw_only=True):
+    type: Literal["abort_result"] = "abort_result"
+    rpc_id: str
+    request_ids: list[str]

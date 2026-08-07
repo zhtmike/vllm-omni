@@ -32,6 +32,7 @@ from vllm_omni.engine.cfg_companion_tracker import CfgCompanionTracker
 from vllm_omni.engine.membership_controller import MembershipController
 from vllm_omni.engine.messages import (
     AbortRequestMessage,
+    AbortResultMessage,
     AddCompanionRequestMessage,
     CollectiveRPCRequestMessage,
     CollectiveRPCResultMessage,
@@ -578,10 +579,27 @@ class Orchestrator:
     async def _handle_abort(self, msg: AbortRequestMessage) -> None:
         """Handle an abort message from the main thread."""
         request_ids = msg.request_ids
-        await self._cleanup_request_ids(
-            self._cfg_tracker.abort_parents(request_ids),
-            abort=True,
-        )
+        try:
+            await self._cleanup_request_ids(
+                self._cfg_tracker.abort_parents(request_ids),
+                abort=True,
+            )
+        except Exception as exc:
+            if msg.rpc_id is not None:
+                await self.rpc_async_queue.put(
+                    ErrorMessage(
+                        error=f"Failed to abort request(s) {request_ids}: {exc}",
+                        error_type=type(exc).__name__,
+                    )
+                )
+            raise
+        if msg.rpc_id is not None:
+            await self.rpc_async_queue.put(
+                AbortResultMessage(
+                    rpc_id=msg.rpc_id,
+                    request_ids=request_ids,
+                )
+            )
         logger.info("[Orchestrator] Aborted request(s) %s", request_ids)
 
     async def _abort_request_ids(self, request_ids: list[str]) -> None:

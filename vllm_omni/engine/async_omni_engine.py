@@ -36,6 +36,7 @@ from vllm_omni.diffusion.diffusion_engine import supports_audio_output
 from vllm_omni.engine import OmniEngineCoreRequest
 from vllm_omni.engine.messages import (
     AbortRequestMessage,
+    AbortResultMessage,
     AddCompanionRequestMessage,
     CollectiveRPCRequestMessage,
     CollectiveRPCResultMessage,
@@ -1409,8 +1410,41 @@ class AsyncOmniEngine:
         self.request_queue.sync_q.put(AbortRequestMessage(request_ids=request_ids))
 
     async def abort_async(self, request_ids: list[str]) -> None:
-        """Async abort API."""
-        self.abort(request_ids)
+        """Abort requests and wait for Orchestrator/backend cleanup."""
+        loop = asyncio.get_running_loop()
+        await loop.run_in_executor(None, lambda: self._abort_and_wait(request_ids))
+
+    def _abort_and_wait(self, request_ids: list[str]) -> None:
+        """Send abort requests and wait until all stage cleanup is complete."""
+        if self.request_queue is None:
+            raise RuntimeError("request_queue is not initialized")
+
+        rpc_id = uuid.uuid4().hex
+        with self._rpc_lock:
+            self.request_queue.sync_q.put(
+                AbortRequestMessage(
+                    request_ids=request_ids,
+                    rpc_id=rpc_id,
+                )
+            )
+            while True:
+                result_msg = self.rpc_output_queue.sync_q.get()
+                if isinstance(result_msg, ErrorMessage):
+                    raise RuntimeError(result_msg.error)
+                if not isinstance(result_msg, AbortResultMessage):
+                    logger.warning(
+                        "[AsyncOmniEngine] Dropping unexpected abort result type=%s",
+                        getattr(result_msg, "type", type(result_msg).__name__),
+                    )
+                    continue
+                if result_msg.rpc_id != rpc_id:
+                    logger.warning(
+                        "[AsyncOmniEngine] Dropping mismatched abort result rpc_id=%s expected=%s",
+                        result_msg.rpc_id,
+                        rpc_id,
+                    )
+                    continue
+                return
 
     def collective_rpc(
         self,
