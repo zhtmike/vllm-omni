@@ -313,7 +313,7 @@ class AsyncOmniEngine:
             name="orchestrator",
         )
         self.orchestrator_thread.start()
-        self._wait_for_orchestrator_init(startup_future, startup_timeout)
+        self._orchestrator_loop = self._wait_for_orchestrator_init(startup_future, startup_timeout)
 
         # Stage runtime fields are assigned directly on self by the bootstrap thread.
         self._weak_finalizer = weakref.finalize(
@@ -467,7 +467,9 @@ class AsyncOmniEngine:
                 asyncio.set_event_loop(None)
                 loop.close()
 
-    def _wait_for_orchestrator_init(self, startup_future: concurrent.futures.Future, startup_timeout: int) -> None:
+    def _wait_for_orchestrator_init(
+        self, startup_future: concurrent.futures.Future, startup_timeout: int
+    ) -> asyncio.AbstractEventLoop:
         """
         Wait for orchestrator startup future to return ready. Raises exception on any failures to the init process.
         """
@@ -478,10 +480,9 @@ class AsyncOmniEngine:
                 self._try_shutdown("[AsyncOmniEngine] Failed to cleanup after orchestrator startup timeout")
                 raise TimeoutError(f"Orchestrator did not become ready within {startup_timeout}s")
             try:
-                startup_future.result(
+                return startup_future.result(
                     timeout=min(remaining, _STARTUP_POLL_INTERVAL_S),
                 )
-                break
             except concurrent.futures.TimeoutError:
                 if not self.orchestrator_thread.is_alive():
                     self._try_shutdown("[AsyncOmniEngine] Failed to cleanup after orchestrator startup failure")
@@ -1498,9 +1499,12 @@ class AsyncOmniEngine:
         → EngineCore.sleep(), which atomically pauses the scheduler, aborts in-flight
         requests (mode="abort"), waits for idle, and only then sleeps the executor.
         """
-        for sid in stage_ids:
-            pool = self.stage_pools[sid]
-            await pool.sleep_async(level=level, mode=mode)
+        async def sleep_stages() -> None:
+            for sid in stage_ids:
+                await self.stage_pools[sid].sleep_async(level=level, mode=mode)
+
+        future = asyncio.run_coroutine_threadsafe(sleep_stages(), self._orchestrator_loop)
+        await asyncio.wrap_future(future)
 
     async def wake_up(
         self,
@@ -1513,9 +1517,12 @@ class AsyncOmniEngine:
         → EngineCore.wake_up(), which restores GPU memory and automatically resumes
         the scheduler when all tags are awake.
         """
-        for sid in stage_ids:
-            pool = self.stage_pools[sid]
-            await pool.wake_up_async(tags=tags)
+        async def wake_stages() -> None:
+            for sid in stage_ids:
+                await self.stage_pools[sid].wake_up_async(tags=tags)
+
+        future = asyncio.run_coroutine_threadsafe(wake_stages(), self._orchestrator_loop)
+        await asyncio.wrap_future(future)
 
     def is_alive(self) -> bool:
         """Whether the orchestrator thread is alive."""
