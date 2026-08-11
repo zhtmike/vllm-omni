@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from vllm.logger import init_logger
-from vllm.v1.engine import EngineCoreOutputs
+from vllm.v1.engine import EngineCoreOutputs, FinishReason
 from vllm.v1.metrics.stats import IterationStats
 
 from vllm_omni.distributed.omni_coordinator import (
@@ -1127,14 +1127,14 @@ class StagePool:
 
     # ---- Stage-local control plane ----
 
-    async def abort_requests(self, request_ids: list[str]) -> None:
+    async def abort_requests(self, request_ids: list[str]) -> list[Any]:
         """Abort the given requests in this stage pool.
 
         Request-bound abort routing stays inside the pool because route affinity
         (``request_id -> replica_id``) is pool-owned.
         """
         if not request_ids:
-            return
+            return []
 
         request_ids_by_replica: dict[int, list[str]] = {}
         for request_id in request_ids:
@@ -1143,6 +1143,22 @@ class StagePool:
                 logger.debug("[StagePool] abort: no live binding for req=%s in stage-%s", request_id, self.stage_id)
                 continue
             request_ids_by_replica.setdefault(replica_id, []).append(request_id)
+
+        all_aborted = [rid for ids in request_ids_by_replica.values() for rid in ids]
+        abort_outputs = []
+        if self._output_processor is not None:
+            for request_id in all_aborted:
+                req_state = self._output_processor.request_states.get(request_id)
+                if req_state is None:
+                    continue
+                output = req_state.make_request_output(
+                    new_token_ids=[],
+                    pooling_output=None,
+                    finish_reason=FinishReason.ABORT,
+                    stop_reason=None,
+                )
+                if output is not None:
+                    abort_outputs.append(output)
 
         for replica_id, replica_request_ids in request_ids_by_replica.items():
             client = self.clients[replica_id]
@@ -1153,9 +1169,9 @@ class StagePool:
         # Clean up OutputProcessor state (e.g. mm_accumulated tensors) that
         # would otherwise leak — aborted requests never produce a final
         # EngineCoreOutput, so process_outputs() never fires its cleanup path.
-        all_aborted = [rid for ids in request_ids_by_replica.values() for rid in ids]
         if all_aborted and self._output_processor is not None:
             self._output_processor.abort_requests(all_aborted, internal=True)
+        return abort_outputs
 
     async def collective_rpc(
         self,

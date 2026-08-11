@@ -580,7 +580,7 @@ class Orchestrator:
         """Handle an abort message from the main thread."""
         request_ids = msg.request_ids
         try:
-            await self._cleanup_request_ids(
+            abort_outputs = await self._cleanup_request_ids(
                 self._cfg_tracker.abort_parents(request_ids),
                 abort=True,
             )
@@ -598,16 +598,30 @@ class Orchestrator:
                 AbortResultMessage(
                     rpc_id=msg.rpc_id,
                     request_ids=request_ids,
+                    outputs=abort_outputs,
                 )
             )
         logger.info("[Orchestrator] Aborted request(s) %s", request_ids)
 
-    async def _abort_request_ids(self, request_ids: list[str]) -> None:
+    async def _abort_request_ids(self, request_ids: list[str]) -> list[OutputMessage]:
         """Forward abort requests to all stage pools."""
         if not request_ids:
-            return
+            return []
+        abort_outputs = []
         for pool in self.stage_pools:
-            await pool.abort_requests(request_ids)
+            pool_outputs = await pool.abort_requests(request_ids)
+            if not pool.final_output:
+                continue
+            abort_outputs.extend(
+                OutputMessage(
+                    request_id=output.request_id,
+                    stage_id=pool.stage_id,
+                    engine_outputs=output,
+                    finished=True,
+                )
+                for output in pool_outputs
+            )
+        return abort_outputs
 
     def _release_request_bindings(self, request_ids: list[str]) -> None:
         """Release all stage-local route bindings for the given request ids."""
@@ -833,18 +847,20 @@ class Orchestrator:
 
     # ---- Shared helpers ----
 
-    async def _cleanup_request_ids(self, request_ids: list[str], *, abort: bool = False) -> None:
+    async def _cleanup_request_ids(self, request_ids: list[str], *, abort: bool = False) -> list[OutputMessage]:
         """Release pool bindings and logical request state for the given ids."""
         if not request_ids:
-            return
+            return []
 
+        abort_outputs = []
         if abort:
-            await self._abort_request_ids(request_ids)
+            abort_outputs = await self._abort_request_ids(request_ids)
         self._release_request_bindings(request_ids)
         for request_id in request_ids:
             self._pd_kv_params.pop(request_id, None)
             if self.request_states.pop(request_id, None) is not None and self._running_counter is not None:
                 self._running_counter.decrement()
+        return abort_outputs
 
     async def _apply_raw_terminal_stage_finish(
         self,

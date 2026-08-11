@@ -817,7 +817,11 @@ class AsyncOmni(EngineClient, OmniBase):
 
     async def _abort(self, request_ids: list[str]) -> None:
         """Submit request IDs to be aborted to the engine."""
-        await self.engine.abort_async(request_ids)
+        abort_outputs = await self.engine.abort_async(request_ids) or []
+        for output in abort_outputs:
+            req_state = self.request_states.get(output.request_id)
+            if req_state is not None:
+                req_state.queue.put_nowait(output)
         for rid in request_ids:
             self.request_states.pop(rid, None)
         if self.log_stats:

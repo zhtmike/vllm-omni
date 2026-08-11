@@ -42,6 +42,7 @@ from vllm_omni.engine.messages import (
     CollectiveRPCResultMessage,
     EngineQueueMessage,
     ErrorMessage,
+    OutputMessage,
     ShutdownRequestMessage,
     StageSubmissionMessage,
 )
@@ -1409,12 +1410,12 @@ class AsyncOmniEngine:
             raise RuntimeError("request_queue is not initialized")
         self.request_queue.sync_q.put(AbortRequestMessage(request_ids=request_ids))
 
-    async def abort_async(self, request_ids: list[str]) -> None:
+    async def abort_async(self, request_ids: list[str]) -> list[OutputMessage]:
         """Abort requests and wait for Orchestrator/backend cleanup."""
         loop = asyncio.get_running_loop()
-        await loop.run_in_executor(None, lambda: self._abort_and_wait(request_ids))
+        return await loop.run_in_executor(None, lambda: self._abort_and_wait(request_ids))
 
-    def _abort_and_wait(self, request_ids: list[str]) -> None:
+    def _abort_and_wait(self, request_ids: list[str]) -> list[OutputMessage]:
         """Send abort requests and wait until all stage cleanup is complete."""
         if self.request_queue is None:
             raise RuntimeError("request_queue is not initialized")
@@ -1444,7 +1445,7 @@ class AsyncOmniEngine:
                         rpc_id,
                     )
                     continue
-                return
+                return result_msg.outputs
 
     def collective_rpc(
         self,

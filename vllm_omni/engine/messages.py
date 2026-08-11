@@ -113,3 +113,4 @@ class AbortResultMessage(EngineQueueMessage, kw_only=True):
     type: Literal["abort_result"] = "abort_result"
     rpc_id: str
     request_ids: list[str]
+    outputs: list[OutputMessage]
