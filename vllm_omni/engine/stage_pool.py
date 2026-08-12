@@ -1144,10 +1144,12 @@ class StagePool:
                 continue
             request_ids_by_replica.setdefault(replica_id, []).append(request_id)
 
-        all_aborted = [rid for ids in request_ids_by_replica.values() for rid in ids]
         abort_outputs = []
         if self._output_processor is not None:
-            for request_id in all_aborted:
+            # Mirror vLLM's OutputProcessor-first abort ordering. A request can
+            # have output state before StagePool route binding is installed;
+            # it still needs a terminal output to unblock its frontend queue.
+            for request_id in request_ids:
                 req_state = self._output_processor.request_states.get(request_id)
                 if req_state is None:
                     continue
@@ -1169,8 +1171,8 @@ class StagePool:
         # Clean up OutputProcessor state (e.g. mm_accumulated tensors) that
         # would otherwise leak — aborted requests never produce a final
         # EngineCoreOutput, so process_outputs() never fires its cleanup path.
-        if all_aborted and self._output_processor is not None:
-            self._output_processor.abort_requests(all_aborted, internal=True)
+        if request_ids and self._output_processor is not None:
+            self._output_processor.abort_requests(request_ids, internal=True)
         return abort_outputs
 
     async def collective_rpc(

@@ -799,33 +799,45 @@ class AsyncOmni(EngineClient, OmniBase):
 
     async def abort(self, request_id: str | Iterable[str]) -> None:
         """Abort request(s) via the Orchestrator."""
+        await self.abort_with_output_ids(request_id)
+
+    async def abort_with_output_ids(self, request_id: str | Iterable[str]) -> set[str]:
+        """Abort requests and report which ones received terminal outputs.
+
+        Returns the internal IDs for which a terminal abort output was
+        delivered. Requests not yet admitted by a stage have no output state,
+        so callers that own an earlier frontend queue can provide a fallback.
+        """
         request_ids = [request_id] if isinstance(request_id, str) else list(request_id)
         # Map the external user request IDs to internal IDs used by the Orchestrator.
         # NOTE: If the user request_id matches multiple requests, all of them will be
         # aborted. This is also what happens in this case in vLLM's output processor.
         internal_ids = [s.request_id for s in self.request_states.values() if s.external_request_id in request_ids]
-        await self._abort(internal_ids)
+        return await self._abort(internal_ids)
 
-    async def _abort_internal_requests(self, request_id: str | Iterable[str]):
+    async def _abort_internal_requests(self, request_id: str | Iterable[str]) -> set[str]:
         """Abort request(s) via the Orchestrator given internal request IDs,
         which take the format <external_request_id>-<UUID>.
         """
         request_ids = [request_id] if isinstance(request_id, str) else list(request_id)
         # Request IDs are already internal, so we just need to get the matching states.
         internal_req_ids = [rid for rid in request_ids if rid in self.request_states]
-        await self._abort(internal_req_ids)
+        return await self._abort(internal_req_ids)
 
-    async def _abort(self, request_ids: list[str]) -> None:
+    async def _abort(self, request_ids: list[str]) -> set[str]:
         """Submit request IDs to be aborted to the engine."""
         abort_outputs = await self.engine.abort_async(request_ids) or []
+        output_request_ids = set()
         for output in abort_outputs:
             req_state = self.request_states.get(output.request_id)
             if req_state is not None:
                 req_state.queue.put_nowait(output)
+                output_request_ids.add(output.request_id)
         for rid in request_ids:
             self.request_states.pop(rid, None)
         if self.log_stats:
             logger.info("[AsyncOmni] Aborted request(s) %s", ",".join(request_ids))
+        return output_request_ids
 
     async def pause_generation(
         self,
