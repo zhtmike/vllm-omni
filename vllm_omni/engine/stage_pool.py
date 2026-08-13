@@ -1127,11 +1127,12 @@ class StagePool:
 
     # ---- Stage-local control plane ----
 
-    async def abort_requests(self, request_ids: list[str]) -> list[Any]:
+    async def abort_requests(self, request_ids: list[str], *, pause: bool = False) -> list[Any]:
         """Abort the given requests in this stage pool.
 
         Request-bound abort routing stays inside the pool because route affinity
-        (``request_id -> replica_id``) is pool-owned.
+        (``request_id -> replica_id``) is pool-owned. Bulk colocated aborts use
+        EngineCore's acknowledged pause path so sleep cannot race ahead of abort.
         """
         if not request_ids:
             return []
@@ -1162,17 +1163,24 @@ class StagePool:
                 if output is not None:
                     abort_outputs.append(output)
 
-        for replica_id, replica_request_ids in request_ids_by_replica.items():
-            client = self.clients[replica_id]
-            if client is None:
-                continue
-            await client.abort_requests_async(replica_request_ids)
-
-        # Clean up OutputProcessor state (e.g. mm_accumulated tensors) that
-        # would otherwise leak — aborted requests never produce a final
-        # EngineCoreOutput, so process_outputs() never fires its cleanup path.
-        if request_ids and self._output_processor is not None:
+            # Remove frontend output state before the backend abort so regular
+            # EngineCore abort outputs cannot race with the synthesized result.
             self._output_processor.abort_requests(request_ids, internal=True)
+
+        if pause:
+            await asyncio.gather(
+                *[
+                    client.pause_scheduler_async(mode="abort", clear_cache=False)
+                    for replica_id in self.live_replica_ids()
+                    if (client := self.clients[replica_id]) is not None
+                ]
+            )
+        else:
+            for replica_id, replica_request_ids in request_ids_by_replica.items():
+                client = self.clients[replica_id]
+                if client is None:
+                    continue
+                await client.abort_requests_async(replica_request_ids)
         return abort_outputs
 
     async def collective_rpc(

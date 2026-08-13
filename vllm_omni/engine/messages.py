@@ -43,6 +43,7 @@ class AbortRequestMessage(EngineQueueMessage, kw_only=True):
     type: Literal["abort"] = "abort"
     request_ids: list[str]
     rpc_id: str | None = None
+    pause: bool = False
 
 
 class CollectiveRPCRequestMessage(EngineQueueMessage, kw_only=True):

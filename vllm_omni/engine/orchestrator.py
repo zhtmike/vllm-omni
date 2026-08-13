@@ -583,6 +583,7 @@ class Orchestrator:
             abort_outputs = await self._cleanup_request_ids(
                 self._cfg_tracker.abort_parents(request_ids),
                 abort=True,
+                pause=msg.pause,
             )
         except Exception as exc:
             if msg.rpc_id is not None:
@@ -603,13 +604,16 @@ class Orchestrator:
             )
         logger.info("[Orchestrator] Aborted request(s) %s", request_ids)
 
-    async def _abort_request_ids(self, request_ids: list[str]) -> list[OutputMessage]:
+    async def _abort_request_ids(self, request_ids: list[str], *, pause: bool = False) -> list[OutputMessage]:
         """Forward abort requests to all stage pools."""
         if not request_ids:
             return []
         abort_outputs = []
         for pool in self.stage_pools:
-            pool_outputs = await pool.abort_requests(request_ids)
+            if pause:
+                pool_outputs = await pool.abort_requests(request_ids, pause=True)
+            else:
+                pool_outputs = await pool.abort_requests(request_ids)
             if not pool.final_output:
                 continue
             abort_outputs.extend(
@@ -847,14 +851,20 @@ class Orchestrator:
 
     # ---- Shared helpers ----
 
-    async def _cleanup_request_ids(self, request_ids: list[str], *, abort: bool = False) -> list[OutputMessage]:
+    async def _cleanup_request_ids(
+        self,
+        request_ids: list[str],
+        *,
+        abort: bool = False,
+        pause: bool = False,
+    ) -> list[OutputMessage]:
         """Release pool bindings and logical request state for the given ids."""
         if not request_ids:
             return []
 
         abort_outputs = []
         if abort:
-            abort_outputs = await self._abort_request_ids(request_ids)
+            abort_outputs = await self._abort_request_ids(request_ids, pause=pause)
         self._release_request_bindings(request_ids)
         for request_id in request_ids:
             self._pd_kv_params.pop(request_id, None)

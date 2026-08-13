@@ -1410,12 +1410,12 @@ class AsyncOmniEngine:
             raise RuntimeError("request_queue is not initialized")
         self.request_queue.sync_q.put(AbortRequestMessage(request_ids=request_ids))
 
-    async def abort_async(self, request_ids: list[str]) -> list[OutputMessage]:
+    async def abort_async(self, request_ids: list[str], *, pause: bool = False) -> list[OutputMessage]:
         """Abort requests and wait for Orchestrator/backend cleanup."""
         loop = asyncio.get_running_loop()
-        return await loop.run_in_executor(None, lambda: self._abort_and_wait(request_ids))
+        return await loop.run_in_executor(None, lambda: self._abort_and_wait(request_ids, pause=pause))
 
-    def _abort_and_wait(self, request_ids: list[str]) -> list[OutputMessage]:
+    def _abort_and_wait(self, request_ids: list[str], *, pause: bool = False) -> list[OutputMessage]:
         """Send abort requests and wait until all stage cleanup is complete."""
         if self.request_queue is None:
             raise RuntimeError("request_queue is not initialized")
@@ -1426,6 +1426,7 @@ class AsyncOmniEngine:
                 AbortRequestMessage(
                     request_ids=request_ids,
                     rpc_id=rpc_id,
+                    pause=pause,
                 )
             )
             while True:
