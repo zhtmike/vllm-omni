@@ -1134,7 +1134,7 @@ class StagePool:
         (``request_id -> replica_id``) is pool-owned. Bulk colocated aborts use
         EngineCore's acknowledged pause path so sleep cannot race ahead of abort.
         """
-        if not request_ids:
+        if not request_ids and not pause:
             return []
 
         request_ids_by_replica: dict[int, list[str]] = {}

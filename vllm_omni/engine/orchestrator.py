@@ -606,7 +606,7 @@ class Orchestrator:
 
     async def _abort_request_ids(self, request_ids: list[str], *, pause: bool = False) -> list[OutputMessage]:
         """Forward abort requests to all stage pools."""
-        if not request_ids:
+        if not request_ids and not pause:
             return []
         abort_outputs = []
         for pool in self.stage_pools:
@@ -859,7 +859,7 @@ class Orchestrator:
         pause: bool = False,
     ) -> list[OutputMessage]:
         """Release pool bindings and logical request state for the given ids."""
-        if not request_ids:
+        if not request_ids and not (abort and pause):
             return []
 
         abort_outputs = []
