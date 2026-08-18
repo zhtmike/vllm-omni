@@ -1240,6 +1240,31 @@ class StagePool:
                 "error": str(exc),
             }
 
+    async def sleep_async(self, level: int = 1, mode: str = "abort") -> None:
+        """Put every live replica in this stage pool to sleep.
+
+        Routes through vLLM's EngineCore.sleep(), which atomically:
+          → pause_scheduler(mode)    # abort in-flight, set PAUSED_NEW
+          → wait for engine idle
+          → Executor.sleep(level)    # safe — scheduler is paused
+        """
+        for replica_id in self.live_replica_ids():
+            client = self.clients[replica_id]
+            if client is not None:
+                await client.sleep_async(level, mode)  # type: ignore[attr-defined]
+
+    async def wake_up_async(self, tags: list[str] | None = None) -> None:
+        """Wake every live replica in this stage pool.
+
+        Routes through vLLM's EngineCore.wake_up(), which restores GPU
+        memory and automatically resumes the scheduler when all tags are
+        awake.
+        """
+        for replica_id in self.live_replica_ids():
+            client = self.clients[replica_id]
+            if client is not None:
+                await client.wake_up_async(tags)  # type: ignore[attr-defined]
+
     def shutdown_replica(self, replica_id: int) -> None:
         """Shutdown one backend handle in this stage pool."""
         if replica_id >= len(self.clients):
